@@ -211,9 +211,35 @@ exports.receiveWebhook = async (req, res) => {
     const locationData  = location.status  === "fulfilled" ? location.value  : {}
     const analysisData  = aiResult.status  === "fulfilled" ? aiResult.value  : {}
 
-    const serviceData = analysisData?.service
-      ? { name: analysisData.service.name, confidence: analysisData.service.confidence || 0, details: {} }
-      : detectService(req.headers, req.body, req.get("User-Agent"))
+    let serviceData
+    if (analysisData?.service) {
+      let confidenceVal = 0
+      const conf = analysisData.service.confidence
+      if (typeof conf === "number") {
+        confidenceVal = conf
+      } else if (typeof conf === "string") {
+        const lowerConf = conf.toLowerCase()
+        if (lowerConf === "high") confidenceVal = 90
+        else if (lowerConf === "medium") confidenceVal = 60
+        else if (lowerConf === "low") confidenceVal = 30
+        else {
+          const parsed = parseFloat(lowerConf)
+          if (!isNaN(parsed)) confidenceVal = parsed
+        }
+      }
+      serviceData = {
+        name: analysisData.service.name || "Unknown",
+        confidence: confidenceVal,
+        details: {}
+      }
+    } else {
+      const rawService = detectService(req.headers, req.body, req.get("User-Agent"))
+      serviceData = {
+        name: rawService.service || "Unknown",
+        confidence: rawService.confidence || 0,
+        details: rawService.details || {}
+      }
+    }
 
     const historicalData = await Request.find({ token }).sort({ timestamp: -1 }).limit(50)
     const anomalies = detectAnomalies(req, historicalData)

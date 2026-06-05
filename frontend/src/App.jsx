@@ -15,7 +15,11 @@ function App() {
 
       <Route path="/login" element={<Login />} />
 
-      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/dashboard" element={<Dashboard defaultTab="webhooks" />} />
+
+      <Route path="/webhooks" element={<Dashboard defaultTab="webhooks" />} />
+
+      <Route path="/analytics" element={<Dashboard defaultTab="analytics" />} />
 
     </Routes>
 

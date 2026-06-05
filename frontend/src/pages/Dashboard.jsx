@@ -8,7 +8,7 @@ import RequestPanel from "../components/RequestPanel"
 import AnalyticsPanel from "../components/AnalyticsPanel"
 import HeaderBar from "../components/HeaderBar"
 
-export default function Dashboard() {
+export default function Dashboard({ defaultTab = "webhooks" }) {
   const navigate  = useNavigate()
   const socketRef = useRef(null)
 
@@ -18,8 +18,22 @@ export default function Dashboard() {
   const [allRequests,      setAllRequests]       = useState([])
   const [selectedRequest,  setSelectedRequest]  = useState(null)
   const [loading,          setLoading]          = useState(true)
-  const [activeTab,        setActiveTab]        = useState("webhooks") // webhooks | analytics
+  const [activeTab,        setActiveTab]        = useState(defaultTab) // webhooks | analytics
   const [toast,            setToast]            = useState(null)
+
+  /* ── sync tab with route and navigation ── */
+  useEffect(() => {
+    setActiveTab(defaultTab)
+  }, [defaultTab])
+
+  const handleTabChange = useCallback((tab) => {
+    setActiveTab(tab)
+    if (tab === "webhooks") {
+      navigate("/webhooks")
+    } else if (tab === "analytics") {
+      navigate("/analytics")
+    }
+  }, [navigate])
   const [darkMode,         setDarkMode]         = useState(
     () => localStorage.getItem("darkMode") === "true"
   )
@@ -193,7 +207,7 @@ export default function Dashboard() {
         onToggleDark={() => setDarkMode(d => !d)}
         onLogout={logout}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         totalWebhooks={webhooks.length}
         totalRequests={allRequests.length}
       />
