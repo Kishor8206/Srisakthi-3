@@ -10,13 +10,16 @@ const {
   clearWebhookRequests
 } = require("../controllers/webhookController")
 
-router.use(protect)                                   // all routes require JWT
+router.use(protect)
 
-router.post("/create",              createWebhook)
-router.get("/user",                 getUserWebhooks)  // GET /api/webhooks/user
-router.delete("/:id",               deleteWebhook)
-router.get("/:id/config",           getWebhookConfig)
-router.put("/:id/config",           updateWebhookConfig)
-router.delete("/:id/requests",      clearWebhookRequests)
+// Specific static routes FIRST — before any /:id patterns
+router.post("/create",           createWebhook)
+router.get("/user",              getUserWebhooks)
+
+// Then parameterised routes — more specific before less specific
+router.delete("/:id/requests",   clearWebhookRequests)   // MUST be before /:id
+router.get("/:id/config",        getWebhookConfig)
+router.put("/:id/config",        updateWebhookConfig)
+router.delete("/:id",            deleteWebhook)
 
 module.exports = router
