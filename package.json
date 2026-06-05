@@ -1,7 +1,21 @@
 {
+  "name": "webhook-inspector",
+  "version": "1.0.0",
+  "description": "AI-powered webhook testing and debugging platform",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "install:backend": "cd backend && npm install",
+    "install:frontend": "cd frontend && npm install"
+  },
   "dependencies": {
     "axios": "^1.13.6",
     "express": "^5.2.1",
     "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }

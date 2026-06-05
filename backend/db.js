@@ -1,9 +1,9 @@
 const mongoose = require("mongoose")
 
-mongoose.connect(
-"mongodb+srv://kishor:kishor%402006@messages.khjyaj7.mongodb.net/webhooks"
-)
-.then(()=>console.log("MongoDB Connected"))
-.catch(err=>console.log(err))
+const uri = process.env.MONGODB_URI || "mongodb+srv://kishor:kishor%402006@messages.khjyaj7.mongodb.net/webhooks"
+
+mongoose.connect(uri)
+.then(()=>console.log("✅ MongoDB Connected"))
+.catch(err=>console.error("❌ MongoDB connection error:", err))
 
 module.exports = mongoose

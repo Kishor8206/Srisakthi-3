@@ -10,6 +10,10 @@ const Schema = new mongoose.Schema({
     type: String,
     required: true
   },
+  description: {
+    type: String,
+    default: ""
+  },
   token: {
     type: String,
     required: true,

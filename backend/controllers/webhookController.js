@@ -1,355 +1,275 @@
-const Endpoint = require("../models/WebhookEndpoint")
-const Request = require("../models/WebhookRequest")
+const Endpoint  = require("../models/WebhookEndpoint")
+const Request   = require("../models/WebhookRequest")
 const { v4: uuidv4 } = require("uuid")
 const { ObjectId } = require("mongodb")
-const { getLocationFromIP, detectService, analyzeRequestPattern, detectAnomalies } = require("../services/analysisService")
+const {
+  getLocationFromIP,
+  detectService,
+  analyzeRequestPattern,
+  detectAnomalies
+} = require("../services/analysisService")
 const unifiedAI = require("../services/unifiedAIService")
 
+const getPublicUrl = () =>
+  process.env.PUBLIC_WEBHOOK_URL || `http://localhost:${process.env.PORT || 5002}`
+
+/* ──────────────────────────────────────── CREATE */
 exports.createWebhook = async (req, res) => {
   try {
-    const { userId, name } = req.body
+    // userId comes from JWT middleware
+    const userId = req.user.userId
+    const { name, description } = req.body
 
-    if (!userId || !name) {
-      return res.status(400).json({ error: "User ID and name are required" })
-    }
+    if (!name) return res.status(400).json({ error: "Webhook name is required" })
+
+    // Enforce webhook limit per user
+    const count = await Endpoint.countDocuments({ userId })
+    if (count >= 20)
+      return res.status(400).json({ error: "Webhook limit reached (20 max per account)" })
 
     const token = uuidv4()
+    const endpoint = await Endpoint.create({ userId, name, description: description || "", token })
 
-    const endpoint = await Endpoint.create({
-      userId,
-      name,
-      token
-    })
-
-    // Get public URL from environment or use localhost for development
-    const publicUrl = process.env.PUBLIC_WEBHOOK_URL || 'http://localhost:5001'
+    const publicUrl = getPublicUrl()
 
     res.status(201).json({
       message: "Webhook created successfully",
-      webhook_url: `${publicUrl}/hooks/${token}`,
-      public_url: `${publicUrl}/hooks/${token}`, // For external services
-      local_url: `http://localhost:5001/hooks/${token}`, // For local testing
-      token,
-      endpoint_id: endpoint._id
+      webhook: {
+        ...endpoint.toObject(),
+        webhook_url: `${publicUrl}/hooks/${token}`,
+        public_url:  `${publicUrl}/hooks/${token}`,
+        local_url:   `http://localhost:${process.env.PORT || 5002}/hooks/${token}`
+      }
     })
-  } catch (error) {
-    console.error("Create webhook error:", error)
+  } catch (err) {
+    console.error("Create webhook error:", err)
     res.status(500).json({ error: "Internal server error" })
   }
 }
 
+/* ──────────────────────────────────────── GET USER WEBHOOKS */
 exports.getUserWebhooks = async (req, res) => {
   try {
-    const { userId } = req.params
+    const userId = req.user.userId
 
-    if (!userId) {
-      return res.status(400).json({ error: "User ID is required" })
-    }
+    const webhooks = await Endpoint.find({ userId }).sort({ createdAt: -1 })
+    const publicUrl = getPublicUrl()
 
-    const webhooks = await Endpoint.find({
-      userId: userId
-    }).sort({ createdAt: -1 })
-
-    // Add public URLs to each webhook
-    const publicUrl = process.env.PUBLIC_WEBHOOK_URL || 'http://localhost:5001'
-    const webhooksWithUrls = webhooks.map(webhook => ({
-      ...webhook.toObject(),
-      public_url: `${publicUrl}/hooks/${webhook.token}`,
-      local_url: `http://localhost:5001/hooks/${webhook.token}`,
-      webhook_url: `${publicUrl}/hooks/${webhook.token}`
+    const enriched = webhooks.map(w => ({
+      ...w.toObject(),
+      webhook_url: `${publicUrl}/hooks/${w.token}`,
+      public_url:  `${publicUrl}/hooks/${w.token}`,
+      local_url:   `http://localhost:${process.env.PORT || 5002}/hooks/${w.token}`
     }))
 
-    res.json(webhooksWithUrls)
-  } catch (error) {
-    console.error("Get user webhooks error:", error)
+    res.json(enriched)
+  } catch (err) {
+    console.error("Get user webhooks error:", err)
     res.status(500).json({ error: "Internal server error" })
   }
 }
 
+/* ──────────────────────────────────────── DELETE */
 exports.deleteWebhook = async (req, res) => {
   try {
+    const userId = req.user.userId
     const { id } = req.params
 
-    console.log("Delete webhook request received. ID:", id)
-    console.log("ID type:", typeof id)
+    if (!ObjectId.isValid(id))
+      return res.status(400).json({ error: "Invalid webhook ID" })
 
-    if (!id) {
-      return res.status(400).json({ error: "Webhook ID is required" })
-    }
+    const webhook = await Endpoint.findOne({ _id: id, userId })
+    if (!webhook)
+      return res.status(404).json({ error: "Webhook not found or not owned by you" })
 
-    // Validate ObjectId format
-    if (!ObjectId.isValid(id)) {
-      console.log("Invalid ObjectId format:", id)
-      return res.status(400).json({ error: "Invalid webhook ID format" })
-    }
-
-    // Find the webhook first to get the token
-    const webhook = await Endpoint.findById(id)
-    console.log("Found webhook:", webhook)
-    
-    if (!webhook) {
-      console.log("Webhook not found for ID:", id)
-      // Try to find all webhooks for debugging
-      const allWebhooks = await Endpoint.find({})
-      console.log("All webhooks in database:", allWebhooks.map(w => ({ _id: w._id, name: w.name, token: w.token })))
-      return res.status(404).json({ error: "Webhook not found" })
-    }
-
-    // Delete all requests associated with this webhook
     await Request.deleteMany({ token: webhook.token })
-
-    // Delete the webhook
     await Endpoint.findByIdAndDelete(id)
 
-    res.json({
-      message: "Webhook and all associated requests deleted successfully"
-    })
-  } catch (error) {
-    console.error("Delete webhook error:", error)
+    res.json({ message: "Webhook and all requests deleted successfully" })
+  } catch (err) {
+    console.error("Delete webhook error:", err)
     res.status(500).json({ error: "Internal server error" })
   }
 }
 
-exports.updateWebhookConfig = async (req, res) => {
-  try {
-    const { id } = req.params
-    const { responseConfig, isActive, autoResponse } = req.body
-
-    if (!id) {
-      return res.status(400).json({ error: "Webhook ID is required" })
-    }
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ error: "Invalid webhook ID format" })
-    }
-
-    const webhook = await Endpoint.findById(id)
-    if (!webhook) {
-      return res.status(404).json({ error: "Webhook not found" })
-    }
-
-    // Update response configuration
-    if (responseConfig) {
-      webhook.responseConfig = {
-        ...webhook.responseConfig,
-        ...responseConfig
-      }
-    }
-
-    // Update other settings
-    if (typeof isActive === 'boolean') {
-      webhook.isActive = isActive
-    }
-    if (typeof autoResponse === 'boolean') {
-      webhook.autoResponse = autoResponse
-    }
-
-    await webhook.save()
-
-    res.json({
-      message: "Webhook configuration updated successfully",
-      webhook: webhook
-    })
-  } catch (error) {
-    console.error("Update webhook config error:", error)
-    res.status(500).json({ error: "Internal server error" })
-  }
-}
-
+/* ──────────────────────────────────────── GET CONFIG */
 exports.getWebhookConfig = async (req, res) => {
   try {
+    const userId = req.user.userId
     const { id } = req.params
 
-    if (!id) {
-      return res.status(400).json({ error: "Webhook ID is required" })
-    }
+    if (!ObjectId.isValid(id))
+      return res.status(400).json({ error: "Invalid webhook ID" })
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ error: "Invalid webhook ID format" })
-    }
+    const webhook = await Endpoint.findOne({ _id: id, userId })
+    if (!webhook)
+      return res.status(404).json({ error: "Webhook not found or not owned by you" })
 
-    const webhook = await Endpoint.findById(id)
-    if (!webhook) {
-      return res.status(404).json({ error: "Webhook not found" })
-    }
-
-    res.json({
-      webhook: webhook
-    })
-  } catch (error) {
-    console.error("Get webhook config error:", error)
+    res.json({ webhook })
+  } catch (err) {
     res.status(500).json({ error: "Internal server error" })
   }
 }
 
+/* ──────────────────────────────────────── UPDATE CONFIG */
+exports.updateWebhookConfig = async (req, res) => {
+  try {
+    const userId = req.user.userId
+    const { id } = req.params
+    const { responseConfig, isActive, autoResponse, name, description } = req.body
+
+    if (!ObjectId.isValid(id))
+      return res.status(400).json({ error: "Invalid webhook ID" })
+
+    const webhook = await Endpoint.findOne({ _id: id, userId })
+    if (!webhook)
+      return res.status(404).json({ error: "Webhook not found or not owned by you" })
+
+    if (responseConfig) {
+      webhook.responseConfig = { ...webhook.responseConfig.toObject?.() || webhook.responseConfig, ...responseConfig }
+    }
+    if (typeof isActive === "boolean")   webhook.isActive = isActive
+    if (typeof autoResponse === "boolean") webhook.autoResponse = autoResponse
+    if (name) webhook.name = name
+    if (description !== undefined) webhook.description = description
+
+    await webhook.save()
+    res.json({ message: "Configuration updated successfully", webhook })
+  } catch (err) {
+    console.error("Update webhook config error:", err)
+    res.status(500).json({ error: "Internal server error" })
+  }
+}
+
+/* ──────────────────────────────────────── CLEAR REQUESTS */
+exports.clearWebhookRequests = async (req, res) => {
+  try {
+    const userId = req.user.userId
+    const { id } = req.params
+
+    if (!ObjectId.isValid(id))
+      return res.status(400).json({ error: "Invalid webhook ID" })
+
+    const webhook = await Endpoint.findOne({ _id: id, userId })
+    if (!webhook)
+      return res.status(404).json({ error: "Webhook not found or not owned by you" })
+
+    const { deletedCount } = await Request.deleteMany({ token: webhook.token })
+    res.json({ message: `Cleared ${deletedCount} requests` })
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" })
+  }
+}
+
+/* ──────────────────────────────────────── RECEIVE WEBHOOK */
 exports.receiveWebhook = async (req, res) => {
+  const startTime = Date.now()
   try {
     const token = req.params.token
+    if (!token) return res.status(400).json({ error: "Token is required" })
 
-    if (!token) {
-      return res.status(400).json({ error: "Token is required" })
-    }
+    const clientIP =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.ip ||
+      req.connection?.remoteAddress ||
+      "unknown"
 
-    // Find the webhook endpoint with its response configuration
     const endpoint = await Endpoint.findOne({ token, isActive: true })
-    
+
     if (!endpoint) {
-      // Still create a request record for 404 errors so they appear in the tester
       const request = await Request.create({
         token,
         method: req.method,
         statusCode: 404,
         headers: req.headers,
-        body: req.body,
+        body: req.body || {},
         query: req.query,
-        ip: req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
-            (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
-            req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown',
-        userAgent: req.get('User-Agent'),
-        contentType: req.get('Content-Type'),
+        ip: clientIP,
+        userAgent: req.get("User-Agent") || "",
+        contentType: req.get("Content-Type") || "",
         url: req.originalUrl,
+        size: JSON.stringify(req.body || {}).length,
         timestamp: new Date()
       })
-
-      // Emit to WebSocket for real-time updates
       const io = req.app.get("io")
-      if (io) {
-        io.emit("new_webhook", request)
-      }
-
+      if (io) io.emit("new_webhook", request)
       return res.status(404).json({ error: "Webhook endpoint not found or inactive" })
     }
 
-    // Create request record with AI analysis
-    const clientIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
-        (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
-        req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown'
-    
-    // Get location data
-    const location = await getLocationFromIP(clientIP)
-    
-    // Detect service using AI
-    const aiServiceDetection = await unifiedAI.detectWebhookService({
-      headers: req.headers,
-      body: req.body,
-      method: req.method,
-      ip: clientIP,
-      userAgent: req.get('User-Agent')
-    })
-    
-    const service = aiServiceDetection.service || detectService(req.headers, req.body, req.get('User-Agent'))
-    
-    // Get historical data for anomaly detection
-    const historicalData = await Request.find({ token })
-      .sort({ timestamp: -1 })
-      .limit(50)
-    
-    // Detect anomalies
+    // Run analysis in parallel (non-blocking — don't hold up response)
+    const [location, aiResult] = await Promise.allSettled([
+      getLocationFromIP(clientIP),
+      unifiedAI.analyzeWebhook({
+        headers: req.headers,
+        body: req.body || {},
+        method: req.method,
+        ip: clientIP,
+        userAgent: req.get("User-Agent")
+      })
+    ])
+
+    const locationData  = location.status  === "fulfilled" ? location.value  : {}
+    const analysisData  = aiResult.status  === "fulfilled" ? aiResult.value  : {}
+
+    const serviceData = analysisData?.service
+      ? { name: analysisData.service.name, confidence: analysisData.service.confidence || 0, details: {} }
+      : detectService(req.headers, req.body, req.get("User-Agent"))
+
+    const historicalData = await Request.find({ token }).sort({ timestamp: -1 }).limit(50)
     const anomalies = detectAnomalies(req, historicalData)
-    
-    // Get AI analysis
-    let aiAnalysis = {}
-    try {
-      aiAnalysis = await unifiedAI.analyzeWebhook({
-        headers: req.headers,
-        body: req.body,
-        method: req.method,
-        ip: clientIP,
-        userAgent: req.get('User-Agent')
-      })
-    } catch (error) {
-      console.error('AI analysis failed:', error.message)
-    }
-    
-    // Get security scan
-    let securityAnalysis = {}
-    try {
-      securityAnalysis = await unifiedAI.securityScan({
-        headers: req.headers,
-        body: req.body,
-        method: req.method,
-        ip: clientIP,
-        userAgent: req.get('User-Agent')
-      })
-    } catch (error) {
-      console.error('Security analysis failed:', error.message)
-    }
-    
-    // Determine risk level
-    let riskLevel = securityAnalysis.riskLevel || 'low'
-    if (anomalies.some(a => a.severity === 'High')) riskLevel = 'high'
-    else if (anomalies.some(a => a.severity === 'Medium')) riskLevel = 'medium'
-    
+
+    const responseTime = Date.now() - startTime
+
     const request = await Request.create({
       token,
       method: req.method,
       statusCode: endpoint.autoResponse ? endpoint.responseConfig.statusCode : 200,
       headers: req.headers,
-      body: req.body,
+      body: req.body || {},
+      rawBody: JSON.stringify(req.body || {}),
       query: req.query,
       ip: clientIP,
-      location,
-      service,
+      url: req.originalUrl,
+      location: locationData,
+      service: serviceData,
       analysis: {
         anomalies,
-        riskLevel,
+        riskLevel: analysisData?.security?.riskLevel || "low",
         pattern: analyzeRequestPattern(historicalData),
-        aiAnalysis,
-        securityAnalysis,
-        aiServiceDetection
+        aiAnalysis: analysisData,
+        securityAnalysis: analysisData?.security || {}
       },
-      userAgent: req.get('User-Agent'),
-      contentType: req.get('Content-Type'),
-      url: req.originalUrl,
+      userAgent: req.get("User-Agent") || "",
+      contentType: req.get("Content-Type") || "",
+      responseTime,
+      size: JSON.stringify(req.body || {}).length,
       timestamp: new Date()
     })
 
-    // Emit to WebSocket for real-time updates
+    // Real-time push
     const io = req.app.get("io")
-    if (io) {
-      io.emit("new_webhook", request)
-    }
+    if (io) io.emit("new_webhook", request)
 
-    // Apply custom response configuration if auto-response is enabled
+    // Auto respond
     if (endpoint.autoResponse) {
       const config = endpoint.responseConfig
-      
-      // Apply delay if configured
-      if (config.delay > 0) {
-        await new Promise(resolve => setTimeout(resolve, config.delay))
-      }
+      if (config.delay > 0)
+        await new Promise(r => setTimeout(r, config.delay))
 
-      // Set custom headers
-      if (config.headers && config.headers.length > 0) {
-        config.headers.forEach(header => {
-          if (header.key && header.value) {
-            res.set(header.key, header.value)
-          }
-        })
-      }
+      if (config.headers?.length > 0)
+        config.headers.forEach(h => { if (h.key && h.value) res.set(h.key, h.value) })
 
-      // Set content type
-      res.set('Content-Type', config.contentType)
-
-      // Send custom response
+      res.set("Content-Type", config.contentType || "application/json")
       try {
-        // Try to parse as JSON first
-        const parsedBody = JSON.parse(config.body)
-        res.status(config.statusCode).json(parsedBody)
-      } catch (e) {
-        // If not valid JSON, send as plain text
+        res.status(config.statusCode).json(JSON.parse(config.body))
+      } catch {
         res.status(config.statusCode).send(config.body)
       }
     } else {
-      // Default response when auto-response is disabled
-      res.json({
-        message: "Webhook received successfully",
-        request_id: request._id,
-        timestamp: request.timestamp
-      })
+      res.json({ received: true, request_id: request._id, timestamp: request.timestamp })
     }
-  } catch (error) {
-    console.error("Receive webhook error:", error)
+  } catch (err) {
+    console.error("Receive webhook error:", err)
     res.status(500).json({ error: "Internal server error" })
   }
 }
