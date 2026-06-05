@@ -69,6 +69,15 @@ app.get("/", (req, res) => res.json({
 /* ─── HEALTH CHECK ──────────────────────────────── */
 app.get("/health", (req, res) => res.json({ status: "healthy", uptime: process.uptime() }))
 
+/* ─── GLOBAL ERROR HANDLER ──────────────────────── */
+app.use((err, req, res, next) => {
+  console.error("Unhandled Application Exception:", err)
+  res.status(500).json({
+    error: "Internal server error",
+    message: err.message || "An unexpected error occurred"
+  })
+})
+
 /* ─── START ─────────────────────────────────────── */
 const PORT = process.env.PORT || 5002
 server.listen(PORT, () => {

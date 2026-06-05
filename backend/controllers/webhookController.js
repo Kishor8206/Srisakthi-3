@@ -163,6 +163,11 @@ exports.clearWebhookRequests = async (req, res) => {
 
 /* ──────────────────────────────────────── RECEIVE WEBHOOK */
 exports.receiveWebhook = async (req, res) => {
+  console.log("Webhook received");
+  console.log("Token:", req.params.token);
+  console.log("Headers:", req.headers);
+  console.log("Body:", req.body);
+
   const startTime = Date.now()
   try {
     const token = req.params.token
