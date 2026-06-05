@@ -20,14 +20,18 @@ const server = http.createServer(app)
 
 /* ─── CORS ─────────────────────────────────────── */
 app.use(cors({
-  origin: function (origin, cb) {
-    if (!origin) return cb(null, true)
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true)
-    if (/\.ngrok(-free)?\.dev$/.test(origin) || /\.ngrok\.io$/.test(origin)) return cb(null, true)
-    if (/\.railway\.app$/.test(origin) || /\.render\.com$/.test(origin)) return cb(null, true)
-    return cb(null, true) // open for dev
-  },
-  credentials: true
+  origin: true,        // reflect the request origin — allows all origins
+  credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization","X-Requested-With"]
+}))
+
+// Handle preflight for all routes explicitly
+app.options("*", cors({
+  origin: true,
+  credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization","X-Requested-With"]
 }))
 
 /* ─── BODY PARSER ───────────────────────────────── */
