@@ -26,8 +26,8 @@ app.use(cors({
   allowedHeaders: ["Content-Type","Authorization","X-Requested-With"]
 }))
 
-// Handle preflight for all routes explicitly
-app.options("*", cors({
+// Handle preflight for all routes (Express 5 compatible wildcard)
+app.options("/{*path}", cors({
   origin: true,
   credentials: true,
   methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
